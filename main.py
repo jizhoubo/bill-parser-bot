@@ -11,6 +11,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.request import HTTPXRequest
 
 from bot.handlers import (
     handle_csv_callback,
@@ -31,7 +32,8 @@ logger = logging.getLogger(__name__)
 
 def main() -> None:
     token = os.environ["BOT_TOKEN"]
-    app = Application.builder().token(token).build()
+    request = HTTPXRequest(connect_timeout=30, read_timeout=30, write_timeout=30)
+    app = Application.builder().token(token).request(request).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
