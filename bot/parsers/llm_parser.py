@@ -1,8 +1,8 @@
-"""Use OpenAI structured outputs to extract transactions from raw statement text."""
+"""LLM fallback parser for pasted statement text via GPT-4o structured output."""
 
 import json
 import logging
-from typing import TypedDict
+
 from openai import OpenAI
 
 logger = logging.getLogger(__name__)
@@ -11,39 +11,36 @@ client = OpenAI()
 TRANSACTION_SCHEMA = {
     "type": "object",
     "properties": {
+        "bank_name": {"type": "string"},
         "transactions": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
-                    "date": {"type": "string", "description": "Transaction date, e.g. 2024-01-15"},
-                    "description": {"type": "string", "description": "Merchant or transaction description"},
-                    "amount": {"type": "number", "description": "Transaction amount (positive = debit, negative = credit/refund)"},
-                    "currency": {"type": "string", "description": "3-letter currency code, e.g. SGD, USD"},
-                    "type": {"type": "string", "enum": ["debit", "credit", "refund", "transfer", "fee", "unknown"]},
+                    "date": {"type": "string", "description": "YYYY-MM-DD"},
+                    "description": {"type": "string"},
+                    "amount": {"type": "number", "description": "positive=debit, negative=credit/refund"},
+                    "currency": {"type": "string"},
                 },
-                "required": ["date", "description", "amount", "currency", "type"],
+                "required": ["date", "description", "amount", "currency"],
                 "additionalProperties": False,
             },
-        }
+        },
     },
-    "required": ["transactions"],
+    "required": ["bank_name", "transactions"],
     "additionalProperties": False,
 }
 
 
-class Transaction(TypedDict):
-    date: str
-    description: str
-    amount: float
-    currency: str
-    type: str
+def parse_text(raw_text: str) -> tuple[list[dict], str, list[str]]:
+    """
+    Parse raw pasted statement text with GPT-4o structured output.
 
-
-def parse_transactions(raw_text: str) -> list[Transaction]:
-    """Extract structured transactions from raw statement text using GPT-4o."""
+    Returns:
+        transactions, bank_name, warnings
+    """
     if not raw_text.strip():
-        return []
+        return [], "Unknown", []
 
     response = client.chat.completions.create(
         model="gpt-4o",
@@ -53,10 +50,10 @@ def parse_transactions(raw_text: str) -> list[Transaction]:
                 "content": (
                     "You are a financial data extractor. "
                     "Given raw text from a bank or credit card statement, "
-                    "extract every transaction into structured JSON. "
-                    "Use ISO date format (YYYY-MM-DD). "
-                    "Amounts should be positive for debits/purchases, negative for credits/refunds. "
-                    "If currency is ambiguous, infer from context or use SGD as default."
+                    "extract every transaction. "
+                    "Dates should be YYYY-MM-DD. "
+                    "Amounts: positive for debits/purchases, negative for credits/refunds. "
+                    "Currency: infer from context, default SGD."
                 ),
             },
             {"role": "user", "content": raw_text},
@@ -64,7 +61,7 @@ def parse_transactions(raw_text: str) -> list[Transaction]:
         response_format={
             "type": "json_schema",
             "json_schema": {
-                "name": "transactions",
+                "name": "statement_transactions",
                 "strict": True,
                 "schema": TRANSACTION_SCHEMA,
             },
@@ -73,6 +70,12 @@ def parse_transactions(raw_text: str) -> list[Transaction]:
 
     content = response.choices[0].message.content or "{}"
     data = json.loads(content)
-    transactions: list[Transaction] = data.get("transactions", [])
-    logger.info(f"Extracted {len(transactions)} transactions")
-    return transactions
+    transactions = data.get("transactions", [])
+    bank_name = data.get("bank_name", "Unknown")
+
+    warnings = []
+    if bank_name == "Unknown":
+        warnings.append("⚠️ Could not identify bank from text.")
+
+    logger.info(f"LLM text parser: {bank_name} → {len(transactions)} transactions")
+    return transactions, bank_name, warnings
