@@ -7,7 +7,7 @@ import tempfile
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from bot.formatters import format_transactions_message, transactions_to_csv
+from bot.formatters import PARSE_MODE, format_transactions_message, transactions_to_csv
 from bot.parsers.image_parser import parse_image
 from bot.parsers.llm_parser import parse_text
 from bot.parsers.pdf_parser import parse_pdf
@@ -88,10 +88,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_text("⏳ Parsing statement text...")
     try:
         transactions, bank_name, warnings = parse_text(text)
-        await _send_result(update, chat_id, transactions, bank_name, warnings)
     except Exception as e:
         logger.error(f"Text parsing error: {e}")
         await update.message.reply_text(f"❌ Parse failed: {e}")
+        return
+
+    await _send_result(update, chat_id, transactions, bank_name, warnings)
 
 
 # ── CSV callback ──────────────────────────────────────────────────────────────
@@ -123,7 +125,6 @@ async def _process_pdf(
     await update.message.reply_text("⏳ Parsing PDF statement...")
     try:
         transactions, bank_name, warnings = parse_pdf(file_bytes, password)
-        await _send_result(update, chat_id, transactions, bank_name, warnings)
     except ValueError as e:
         msg = str(e)
         if "password" in msg.lower():
@@ -133,9 +134,13 @@ async def _process_pdf(
             )
         else:
             await update.message.reply_text(f"❌ {msg}")
+        return
     except Exception as e:
         logger.error(f"PDF parse error: {e}")
         await update.message.reply_text(f"❌ Failed to parse PDF: {e}")
+        return
+
+    await _send_result(update, chat_id, transactions, bank_name, warnings)
 
 
 async def _process_image(
@@ -144,10 +149,12 @@ async def _process_image(
     await update.message.reply_text("⏳ Reading statement image via GPT-4o Vision...")
     try:
         transactions, bank_name, warnings = parse_image(file_bytes, mime)
-        await _send_result(update, chat_id, transactions, bank_name, warnings)
     except Exception as e:
         logger.error(f"Image parse error: {e}")
         await update.message.reply_text(f"❌ Failed to parse image: {e}")
+        return
+
+    await _send_result(update, chat_id, transactions, bank_name, warnings)
 
 
 async def _send_result(
@@ -169,4 +176,4 @@ async def _send_result(
     keyboard = [[InlineKeyboardButton("📥 Download CSV", callback_data="download_csv")]] if transactions else None
     reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
 
-    await update.message.reply_text(message, parse_mode="Markdown", reply_markup=reply_markup)
+    await update.message.reply_text(message, parse_mode=PARSE_MODE, reply_markup=reply_markup)
